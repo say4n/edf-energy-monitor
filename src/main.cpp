@@ -1247,6 +1247,15 @@ bool connectWifi() {
   WiFi.setSleep(false);
   esp_wifi_set_ps(WIFI_PS_NONE);
 
+  wifi_country_t country = {};
+  country.cc[0] = 'G';
+  country.cc[1] = 'B';
+  country.cc[2] = 'O';
+  country.schan = 1;
+  country.nchan = 13;
+  country.policy = WIFI_COUNTRY_POLICY_AUTO;
+  esp_wifi_set_country(&country);
+
 #if HAS_LOCAL_WIFI_SECRETS
   setWifiDetail("Wi-Fi config: local secrets header loaded");
 #else

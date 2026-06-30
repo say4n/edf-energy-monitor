@@ -1,7 +1,30 @@
+#pragma once
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <Adafruit_NeoPixel.h>
+#include <HTTPClient.h>
+#include <M5PM1.h>
+#include <M5Unified.h>
+#include <Preferences.h>
+#include <WebServer.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <driver/rtc_io.h>
+#include <esp_sleep.h>
+#include <esp_wifi.h>
+#include <qrcode.h>
+#include <time.h>
+
+#include "app/setup_config.h"
+#include "app/version.h"
+
+namespace app {
+
 constexpr const char* EDF_BASE_URL = "https://api.edfgb-kraken.energy";
 constexpr const char* GRAPHQL_URL = "https://api.edfgb-kraken.energy/v1/graphql/";
 constexpr const char* TZ_LONDON = "GMT0BST,M3.5.0/1,M10.5.0/2";
-constexpr const char *EDF_USER_AGENT = "say4n/edf-energy-monitor";
+constexpr const char* EDF_USER_AGENT = "say4n/edf-energy-monitor";
 constexpr const char* EDF_CONTEXT_HEADER = "Ha-Integration-Context";
 
 constexpr gpio_num_t BTN_UP_PIN = GPIO_NUM_10;      // G10
@@ -12,6 +35,7 @@ constexpr int MAX_MONTH_DAYS = 31;
 constexpr int YEAR_MONTHS = 12;
 constexpr int CONSUMPTION_PAGE_SIZE = 64;
 constexpr uint32_t RTC_STATE_VERSION = 2;
+
 constexpr uint16_t COLOR_ELECTRICITY = 0x001F;  // blue
 constexpr uint16_t COLOR_GAS = 0xFBE0;          // orange/yellow
 constexpr uint16_t COLOR_HEADER = 0x001F;
@@ -31,7 +55,7 @@ enum Page : int {
   PAGE_COUNT = 3,
 };
 
-const char* pageNameC(Page page) {
+inline const char* pageNameC(Page page) {
   switch (page) {
     case PAGE_WEEK: return "7d";
     case PAGE_MONTH: return "30d";
@@ -74,34 +98,40 @@ struct TokenState {
   time_t refreshExpiresAt = 0;
 };
 
-RTC_DATA_ATTR Bucket rtcWeek[7];
-RTC_DATA_ATTR Bucket rtcMonth[MAX_MONTH_DAYS];
-RTC_DATA_ATTR Bucket rtcYear[YEAR_MONTHS];
-RTC_DATA_ATTR uint32_t rtcStateVersion = 0;
-RTC_DATA_ATTR int rtcMonthDays = 0;
-RTC_DATA_ATTR int rtcCurrentPage = PAGE_WEEK;
-RTC_DATA_ATTR bool rtcHasData = false;
-RTC_DATA_ATTR bool rtcPageHasData[PAGE_COUNT] = {false, false, false};
-RTC_DATA_ATTR time_t rtcLastRefresh = 0;
-RTC_DATA_ATTR char rtcLastError[96] = "";
-RTC_DATA_ATTR char rtcWifiDetail[160] = "";
+// RTC memory persists across deep sleep.
+extern RTC_DATA_ATTR Bucket rtcWeek[7];
+extern RTC_DATA_ATTR Bucket rtcMonth[MAX_MONTH_DAYS];
+extern RTC_DATA_ATTR Bucket rtcYear[YEAR_MONTHS];
+extern RTC_DATA_ATTR uint32_t rtcStateVersion;
+extern RTC_DATA_ATTR int rtcMonthDays;
+extern RTC_DATA_ATTR int rtcCurrentPage;
+extern RTC_DATA_ATTR bool rtcHasData;
+extern RTC_DATA_ATTR bool rtcPageHasData[PAGE_COUNT];
+extern RTC_DATA_ATTR time_t rtcLastRefresh;
+extern RTC_DATA_ATTR char rtcLastError[96];
+extern RTC_DATA_ATTR char rtcWifiDetail[160];
 
-Preferences prefs;
-WebServer server(80);
-M5Canvas canvas(&M5.Display);
-M5PM1 pm1;
-Adafruit_NeoPixel statusPixels(PAPER_COLOR_LED_COUNT, PAPER_COLOR_LED_PIN, NEO_GRB + NEO_KHZ800);
-AppConfig config;
-TokenState tokenState;
-bool setupMode = false;
-bool webStarted = false;
-unsigned long awakeSinceMs = 0;
-bool directLedReady = false;
-bool m5LedReady = false;
-bool wifiConnectInProgress = false;
-int qrDrawX = 0;
-int qrDrawY = 0;
-int qrDrawMaxSize = 0;
+extern Preferences prefs;
+extern WebServer server;
+extern M5Canvas canvas;
+extern M5PM1 pm1;
+extern Adafruit_NeoPixel statusPixels;
+extern AppConfig config;
+extern TokenState tokenState;
+extern bool setupMode;
+extern bool webStarted;
+extern unsigned long awakeSinceMs;
+extern bool directLedReady;
+extern bool m5LedReady;
+extern bool wifiConnectInProgress;
 
+// Forward declarations for functions used across modules.
+void logLine(const char* level, const char* func, const char* fmt, ...);
 bool connectWifi();
 bool ensureWifiConnected(const char* context);
+
+}  // namespace app
+
+#define LOGI(fmt, ...) app::logLine("I", __func__, fmt, ##__VA_ARGS__)
+#define LOGW(fmt, ...) app::logLine("W", __func__, fmt, ##__VA_ARGS__)
+#define LOGE(fmt, ...) app::logLine("E", __func__, fmt, ##__VA_ARGS__)

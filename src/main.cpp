@@ -1,38 +1,11 @@
 #include <Arduino.h>
-#include <ArduinoJson.h>
-#include <Adafruit_NeoPixel.h>
-#include <HTTPClient.h>
-#include <M5PM1.h>
-#include <M5Unified.h>
-#include <Preferences.h>
-#include <WebServer.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <driver/rtc_io.h>
-#include <esp_sleep.h>
-#include <esp_wifi.h>
-#include <qrcode.h>
-#include <time.h>
 
-#include "app/setup_config.h"
+#include "app/state.h"
+#include "app/core.h"
+#include "app/edf.h"
+#include "app/ui.h"
 
-namespace {
-
-#define LOGI(fmt, ...) logLine("I", __func__, fmt, ##__VA_ARGS__)
-#define LOGW(fmt, ...) logLine("W", __func__, fmt, ##__VA_ARGS__)
-#define LOGE(fmt, ...) logLine("E", __func__, fmt, ##__VA_ARGS__)
-
-#include "app/state.inc"
-#include "app/common.inc"
-#include "app/config_store.inc"
-#include "app/http_client.inc"
-#include "app/edf_data.inc"
-#include "app/render.inc"
-#include "app/wifi.inc"
-#include "app/web_setup.inc"
-#include "app/buttons_sleep.inc"
-
-}  // namespace
+using namespace app;
 
 void setup() {
   auto cfg = M5.config();

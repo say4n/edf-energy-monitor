@@ -23,6 +23,24 @@ pio run -e m5stack-papercolor -t upload
 
 On first boot, the device connects to Wi-Fi and shows a local setup URL. Open it on the same network, enter your EDF email, password, and account number, then the device stores only the EDF refresh token.
 
+## Firmware version
+
+The build injects the current Git short hash as `FIRMWARE_VERSION`. It is shown on the status and dashboard screens and on the web setup page.
+
+## Project layout
+
+- `src/main.cpp` — setup/loop orchestration.
+- `src/app/state.{h,cpp}` — shared constants, types, and global state.
+- `src/app/core.{h,cpp}` — platform helpers, LED, buttons/sleep, Wi-Fi, NVS config store.
+- `src/app/edf.{h,cpp}` — HTTP client and EDF Kraken API data fetching.
+- `src/app/ui.{h,cpp}` — e-ink rendering and web setup server.
+- `scripts/version.py` — pre-build script that injects the git short hash.
+- `.github/workflows/build.yml` — CI build with PlatformIO.
+
+## CI
+
+A GitHub Actions workflow runs `pio run -e m5stack-papercolor` on every push and pull request to `main`.
+
 ## Usage notes
 
 - The three views are rolling windows: `7d`, `30d`, and `1y`.

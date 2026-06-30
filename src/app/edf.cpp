@@ -1,34 +1,100 @@
-bool obtainRefreshToken(const String& email, const String& password, String* refreshToken) {
-  LOGI("obtaining initial refresh token for email_present=%d password_present=%d",
-       email.length() > 0, password.length() > 0);
-  JsonDocument payload;
-  payload["query"] =
-    "mutation ObtainToken($email: String!, $password: String!) {"
-    "  obtainKrakenToken(input: { email: $email, password: $password }) {"
-    "    token refreshToken refreshExpiresIn"
-    "  }"
-    "}";
-  payload["variables"]["email"] = email;
-  payload["variables"]["password"] = password;
+#include "app/edf.h"
 
-  String body;
-  serializeJson(payload, body);
+#include "app/core.h"
 
-  JsonDocument response;
-  if (!postJson(GRAPHQL_URL, body, response, "", "initial-token")) return false;
-  logGraphqlResponseShape(response, "initial-token");
+namespace app {
 
-  String token = response["data"]["obtainKrakenToken"]["refreshToken"].as<String>();
-  LOGI("initial token fields access_len=%u refresh_len=%u",
-       response["data"]["obtainKrakenToken"]["token"].as<String>().length(), token.length());
-  if (token.length() == 0) {
-    String errors = graphqlErrorSummary(response);
-    setLastError(errors.length() > 0 ? ("EDF login failed: " + errors) : "EDF login failed: no refresh token");
+namespace {
+
+bool postJson(const String& url, const String& payload, JsonDocument& response, const String& auth = "", const String& context = "papercolor") {
+  LOGI("HTTP POST start context=%s url=%s payload_bytes=%u auth_present=%d",
+       context.c_str(), url.c_str(), payload.length(), auth.length() > 0);
+  if (!ensureWifiConnected(context.c_str())) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("Wi-Fi unavailable for HTTP POST");
+    return false;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(20000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(3);
+  if (!http.begin(client, url)) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("HTTP begin failed");
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("User-Agent", EDF_USER_AGENT);
+  http.addHeader(EDF_CONTEXT_HEADER, context);
+  if (auth.length() > 0) http.addHeader("Authorization", auth);
+
+  int code = http.POST(payload);
+  LOGI("HTTP POST complete context=%s status=%d", context.c_str(), code);
+  if (code < 200 || code >= 300) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("HTTP POST failed: " + String(code));
+    http.end();
     return false;
   }
 
-  *refreshToken = token;
-  LOGI("initial refresh token obtained");
+  DeserializationError err = deserializeJson(response, http.getStream());
+  http.end();
+  if (err) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("JSON parse failed: " + String(err.c_str()));
+    return false;
+  }
+  LOGI("HTTP POST parsed context=%s", context.c_str());
+  return true;
+}
+
+bool getJson(const String& url, JsonDocument& response, const String& auth = "", const String& context = "papercolor", JsonDocument* filter = nullptr) {
+  LOGI("HTTP GET start context=%s url=%s auth_present=%d", context.c_str(), url.c_str(), auth.length() > 0);
+  if (!ensureWifiConnected(context.c_str())) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("Wi-Fi unavailable for HTTP GET");
+    return false;
+  }
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(20000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setRedirectLimit(3);
+  if (!http.begin(client, url)) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("HTTP begin failed");
+    return false;
+  }
+  http.addHeader("User-Agent", EDF_USER_AGENT);
+  http.addHeader(EDF_CONTEXT_HEADER, context);
+  if (auth.length() > 0) http.addHeader("Authorization", auth);
+
+  int code = http.GET();
+  int payloadSize = http.getSize();
+  LOGI("HTTP GET complete context=%s status=%d content_length=%d filtered=%d free_heap=%u",
+       context.c_str(), code, payloadSize, filter != nullptr, ESP.getFreeHeap());
+  if (code < 200 || code >= 300) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("HTTP GET failed: " + String(code));
+    http.end();
+    return false;
+  }
+
+  DeserializationError err = filter == nullptr
+    ? deserializeJson(response, http.getStream())
+    : deserializeJson(response, http.getStream(), DeserializationOption::Filter(*filter));
+  http.end();
+  if (err) {
+    ledPulse(255, 0, 0, 2);
+    setLastError("JSON parse failed: " + String(err.c_str()));
+    return false;
+  }
+  LOGI("HTTP GET parsed context=%s free_heap=%u", context.c_str(), ESP.getFreeHeap());
   return true;
 }
 
@@ -92,102 +158,6 @@ bool refreshAccessToken() {
 
 String authHeader(bool jwtPrefix = true) {
   return jwtPrefix ? "JWT " + tokenState.accessToken : tokenState.accessToken;
-}
-
-bool discoverAccount(const String& accountNumber) {
-  LOGI("discovering account account=%s", accountNumber.c_str());
-  if (!refreshAccessToken()) return false;
-
-  JsonDocument payload;
-  String query =
-    "query {"
-    "  account(accountNumber: \"" + accountNumber + "\") {"
-    "    electricityAgreements(active: true) {"
-    "      meterPoint {"
-    "        mpan"
-    "        meters(includeInactive: false) { serialNumber smartImportElectricityMeter { deviceId } }"
-    "        agreements(includeInactive: true) { validFrom validTo tariff { ... on TariffType { productCode tariffCode } } }"
-    "      }"
-    "    }"
-    "    gasAgreements(active: true) {"
-    "      meterPoint {"
-    "        mprn"
-    "        meters(includeInactive: false) { serialNumber consumptionUnits smartGasMeter { deviceId } }"
-    "        agreements(includeInactive: true) { validFrom validTo tariff { productCode tariffCode } }"
-    "      }"
-    "    }"
-    "  }"
-    "}";
-  payload["query"] = query;
-
-  String body;
-  serializeJson(payload, body);
-
-  JsonDocument response;
-  if (!postJson(GRAPHQL_URL, body, response, authHeader(false), "get-account")) return false;
-
-  JsonObject account = response["data"]["account"];
-  if (account.isNull()) {
-    setLastError("Account not found");
-    return false;
-  }
-
-  config.electricity = FuelConfig {};
-  config.electricity.isElectricity = true;
-  for (JsonObject agreement : account["electricityAgreements"].as<JsonArray>()) {
-    JsonObject meterPoint = agreement["meterPoint"];
-    JsonObject meter = meterPoint["meters"][0];
-    JsonObject tariffAgreement = meterPoint["agreements"][0];
-    const char* product = tariffAgreement["tariff"]["productCode"] | "";
-    const char* tariff = tariffAgreement["tariff"]["tariffCode"] | "";
-    if (meterPoint["mpan"].is<const char*>() && meter["serialNumber"].is<const char*>() && strlen(product) > 0 && strlen(tariff) > 0) {
-      config.electricity.present = true;
-      config.electricity.pointId = meterPoint["mpan"].as<const char*>();
-      config.electricity.serial = meter["serialNumber"].as<const char*>();
-      config.electricity.smartMeter = !meter["smartImportElectricityMeter"].isNull();
-      config.electricity.productCode = product;
-      config.electricity.tariffCode = tariff;
-      LOGI("discovered electricity mpan=%s serial=%s product=%s tariff=%s smart=%d",
-           config.electricity.pointId.c_str(), config.electricity.serial.c_str(),
-           config.electricity.productCode.c_str(), config.electricity.tariffCode.c_str(),
-           config.electricity.smartMeter);
-      break;
-    }
-  }
-
-  config.gas = FuelConfig {};
-  config.gas.isElectricity = false;
-  for (JsonObject agreement : account["gasAgreements"].as<JsonArray>()) {
-    JsonObject meterPoint = agreement["meterPoint"];
-    JsonObject meter = meterPoint["meters"][0];
-    JsonObject tariffAgreement = meterPoint["agreements"][0];
-    const char* product = tariffAgreement["tariff"]["productCode"] | "";
-    const char* tariff = tariffAgreement["tariff"]["tariffCode"] | "";
-    if (meterPoint["mprn"].is<const char*>() && meter["serialNumber"].is<const char*>() && strlen(product) > 0 && strlen(tariff) > 0) {
-      config.gas.present = true;
-      config.gas.pointId = meterPoint["mprn"].as<const char*>();
-      config.gas.serial = meter["serialNumber"].as<const char*>();
-      config.gas.productCode = product;
-      config.gas.tariffCode = tariff;
-      config.gas.consumptionUnits = meter["consumptionUnits"] | "m3";
-      LOGI("discovered gas mprn=%s serial=%s product=%s tariff=%s units=%s",
-           config.gas.pointId.c_str(), config.gas.serial.c_str(),
-           config.gas.productCode.c_str(), config.gas.tariffCode.c_str(),
-           config.gas.consumptionUnits.c_str());
-      break;
-    }
-  }
-
-  if (!config.electricity.present && !config.gas.present) {
-    setLastError("No meters discovered");
-    return false;
-  }
-
-  config.accountNumber = accountNumber;
-  config.configured = true;
-  saveConfig();
-  LOGI("account discovery complete elec=%d gas=%d", config.electricity.present, config.gas.present);
-  return true;
 }
 
 float rateAt(JsonArray rates, time_t slotStart) {
@@ -410,6 +380,138 @@ void resetBuckets(Bucket* buckets, int count) {
   for (int i = 0; i < count; ++i) buckets[i] = Bucket {};
 }
 
+}  // namespace
+
+bool obtainRefreshToken(const String& email, const String& password, String* refreshToken) {
+  LOGI("obtaining initial refresh token for email_present=%d password_present=%d",
+       email.length() > 0, password.length() > 0);
+  JsonDocument payload;
+  payload["query"] =
+    "mutation ObtainToken($email: String!, $password: String!) {"
+    "  obtainKrakenToken(input: { email: $email, password: $password }) {"
+    "    token refreshToken refreshExpiresIn"
+    "  }"
+    "}";
+  payload["variables"]["email"] = email;
+  payload["variables"]["password"] = password;
+
+  String body;
+  serializeJson(payload, body);
+
+  JsonDocument response;
+  if (!postJson(GRAPHQL_URL, body, response, "", "initial-token")) return false;
+  logGraphqlResponseShape(response, "initial-token");
+
+  String token = response["data"]["obtainKrakenToken"]["refreshToken"].as<String>();
+  LOGI("initial token fields access_len=%u refresh_len=%u",
+       response["data"]["obtainKrakenToken"]["token"].as<String>().length(), token.length());
+  if (token.length() == 0) {
+    String errors = graphqlErrorSummary(response);
+    setLastError(errors.length() > 0 ? ("EDF login failed: " + errors) : "EDF login failed: no refresh token");
+    return false;
+  }
+
+  *refreshToken = token;
+  LOGI("initial refresh token obtained");
+  return true;
+}
+
+bool discoverAccount(const String& accountNumber) {
+  LOGI("discovering account account=%s", accountNumber.c_str());
+  if (!refreshAccessToken()) return false;
+
+  JsonDocument payload;
+  String query =
+    "query {"
+    "  account(accountNumber: \"" + accountNumber + "\") {"
+    "    electricityAgreements(active: true) {"
+    "      meterPoint {"
+    "        mpan"
+    "        meters(includeInactive: false) { serialNumber smartImportElectricityMeter { deviceId } }"
+    "        agreements(includeInactive: true) { validFrom validTo tariff { ... on TariffType { productCode tariffCode } } }"
+    "      }"
+    "    }"
+    "    gasAgreements(active: true) {"
+    "      meterPoint {"
+    "        mprn"
+    "        meters(includeInactive: false) { serialNumber consumptionUnits smartGasMeter { deviceId } }"
+    "        agreements(includeInactive: true) { validFrom validTo tariff { ... on TariffType { productCode tariffCode } } }"
+    "      }"
+    "    }"
+    "  }"
+    "}";
+  payload["query"] = query;
+
+  String body;
+  serializeJson(payload, body);
+
+  JsonDocument response;
+  if (!postJson(GRAPHQL_URL, body, response, authHeader(false), "get-account")) return false;
+
+  JsonObject account = response["data"]["account"];
+  if (account.isNull()) {
+    setLastError("Account not found");
+    return false;
+  }
+
+  config.electricity = FuelConfig {};
+  config.electricity.isElectricity = true;
+  for (JsonObject agreement : account["electricityAgreements"].as<JsonArray>()) {
+    JsonObject meterPoint = agreement["meterPoint"];
+    JsonObject meter = meterPoint["meters"][0];
+    JsonObject tariffAgreement = meterPoint["agreements"][0];
+    const char* product = tariffAgreement["tariff"]["productCode"] | "";
+    const char* tariff = tariffAgreement["tariff"]["tariffCode"] | "";
+    if (meterPoint["mpan"].is<const char*>() && meter["serialNumber"].is<const char*>() && strlen(product) > 0 && strlen(tariff) > 0) {
+      config.electricity.present = true;
+      config.electricity.pointId = meterPoint["mpan"].as<const char*>();
+      config.electricity.serial = meter["serialNumber"].as<const char*>();
+      config.electricity.smartMeter = !meter["smartImportElectricityMeter"].isNull();
+      config.electricity.productCode = product;
+      config.electricity.tariffCode = tariff;
+      LOGI("discovered electricity mpan=%s serial=%s product=%s tariff=%s smart=%d",
+           config.electricity.pointId.c_str(), config.electricity.serial.c_str(),
+           config.electricity.productCode.c_str(), config.electricity.tariffCode.c_str(),
+           config.electricity.smartMeter);
+      break;
+    }
+  }
+
+  config.gas = FuelConfig {};
+  config.gas.isElectricity = false;
+  for (JsonObject agreement : account["gasAgreements"].as<JsonArray>()) {
+    JsonObject meterPoint = agreement["meterPoint"];
+    JsonObject meter = meterPoint["meters"][0];
+    JsonObject tariffAgreement = meterPoint["agreements"][0];
+    const char* product = tariffAgreement["tariff"]["productCode"] | "";
+    const char* tariff = tariffAgreement["tariff"]["tariffCode"] | "";
+    if (meterPoint["mprn"].is<const char*>() && meter["serialNumber"].is<const char*>() && strlen(product) > 0 && strlen(tariff) > 0) {
+      config.gas.present = true;
+      config.gas.pointId = meterPoint["mprn"].as<const char*>();
+      config.gas.serial = meter["serialNumber"].as<const char*>();
+      config.gas.productCode = product;
+      config.gas.tariffCode = tariff;
+      config.gas.consumptionUnits = meter["consumptionUnits"] | "m3";
+      LOGI("discovered gas mprn=%s serial=%s product=%s tariff=%s units=%s",
+           config.gas.pointId.c_str(), config.gas.serial.c_str(),
+           config.gas.productCode.c_str(), config.gas.tariffCode.c_str(),
+           config.gas.consumptionUnits.c_str());
+      break;
+    }
+  }
+
+  if (!config.electricity.present && !config.gas.present) {
+    setLastError("No meters discovered");
+    return false;
+  }
+
+  config.accountNumber = accountNumber;
+  config.configured = true;
+  saveConfig();
+  LOGI("account discovery complete elec=%d gas=%d", config.electricity.present, config.gas.present);
+  return true;
+}
+
 bool currentPageHasData() {
   int page = rtcCurrentPage;
   return page >= 0 && page < PAGE_COUNT && rtcPageHasData[page];
@@ -421,7 +523,7 @@ void setCurrentPageHasData(bool hasData) {
   rtcHasData = rtcPageHasData[PAGE_WEEK] || rtcPageHasData[PAGE_MONTH] || rtcPageHasData[PAGE_YEAR];
 }
 
-bool refreshData(bool* displayChanged = nullptr) {
+bool refreshData(bool* displayChanged) {
   LOGI("refreshData start");
   ledPulse(255, 255, 255, 2);
 
@@ -525,6 +627,4 @@ bool refreshData(bool* displayChanged = nullptr) {
   return true;
 }
 
-String pageName(Page page) {
-  return String(pageNameC(page));
-}
+}  // namespace app

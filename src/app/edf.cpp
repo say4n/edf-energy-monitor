@@ -71,6 +71,8 @@ bool getJson(const String& url, JsonDocument& response, const String& auth = "",
     return false;
   }
   http.addHeader("User-Agent", EDF_USER_AGENT);
+  http.addHeader("Cache-Control", "no-cache");
+  http.addHeader("Pragma", "no-cache");
   http.addHeader(EDF_CONTEXT_HEADER, context);
   if (auth.length() > 0) http.addHeader("Authorization", auth);
 
@@ -363,9 +365,11 @@ bool fetchFuelWindow(const FuelConfig& fuel, Page page, time_t from, time_t to, 
       }
 
       const char* next = doc["next"] | nullptr;
+      String sliceFromText = isoUtc(sliceFrom);
+      String sliceToText = isoUtc(sliceTo);
       LOGI("fetchFuelWindow grouped fuel=%s group_by=%s from=%s to=%s items=%d has_next=%d",
            fuel.isElectricity ? "electricity" : "gas", groupBy,
-           isoUtc(sliceFrom).c_str(), isoUtc(sliceTo).c_str(), pageItems, next != nullptr);
+           sliceFromText.c_str(), sliceToText.c_str(), pageItems, next != nullptr);
       nextUrl = next == nullptr ? "" : String(next);
       doc.clear();
       url = nextUrl;
@@ -584,6 +588,24 @@ bool refreshData(bool* displayChanged) {
   if (page == PAGE_WEEK) {
     ok = fetchFuelWindow(config.electricity, PAGE_WEEK, weekStart, nextWeekEnd, nextWeek, 7) &&
          fetchFuelWindow(config.gas, PAGE_WEEK, weekStart, nextWeekEnd, nextWeek, 7);
+    if (ok) {
+      // The EDF grouped daily endpoint occasionally returns plausible-looking
+      // but incorrect non-zero aggregates. A manual refresh usually fixes it,
+      // so do one automatic verification pass before accepting weekly data.
+      Bucket verifyWeek[7];
+      resetBuckets(verifyWeek, 7);
+      delay(500);
+      bool verifyOk = fetchFuelWindow(config.electricity, PAGE_WEEK, weekStart, nextWeekEnd, verifyWeek, 7) &&
+                      fetchFuelWindow(config.gas, PAGE_WEEK, weekStart, nextWeekEnd, verifyWeek, 7);
+      if (verifyOk && !bucketsEqual(nextWeek, verifyWeek, 7)) {
+        LOGW("weekly grouped data changed on verification pass; accepting second sample");
+        copyBuckets(nextWeek, verifyWeek, 7);
+      } else if (!verifyOk) {
+        LOGW("weekly grouped verification pass failed; keeping first successful sample");
+      } else {
+        LOGI("weekly grouped verification pass matched first sample");
+      }
+    }
   } else if (page == PAGE_MONTH) {
     ok = fetchFuelWindow(config.electricity, PAGE_MONTH, monthStart, nextMonthEnd, nextMonth, nextCount) &&
          fetchFuelWindow(config.gas, PAGE_MONTH, monthStart, nextMonthEnd, nextMonth, nextCount);

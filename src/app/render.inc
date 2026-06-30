@@ -132,9 +132,9 @@ void drawDashboard() {
 
   canvas.setFont(&fonts::Font2);
   canvas.setTextDatum(top_right);
-  String status = WiFi.isConnected() ? WiFi.localIP().toString() : "offline";
+  String status = dashboardStatusLabel();
   canvas.drawString(ellipsizeText(status, 138), W - 14, 8);
-  String refreshed = rtcLastRefresh > 0 ? dateLabel(rtcLastRefresh, "%d %b %H:%M") : "not refreshed";
+  String refreshed = dashboardRefreshLabel(rtcLastRefresh);
   canvas.drawString(ellipsizeText(refreshed, 138), W - 14, 28);
 
   Bucket* buckets = rtcWeek;

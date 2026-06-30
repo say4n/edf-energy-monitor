@@ -97,8 +97,9 @@ void setup() {
        shouldRefresh, pageChangedOnWake, refreshWake, pageHasData, rtcHasData,
        static_cast<long>(rtcLastRefresh), wifiOk);
   if (shouldRefresh && wifiOk) {
-    bool ok = refreshData();
-    LOGI("startup refresh complete ok=%d", ok);
+    bool displayChanged = false;
+    bool ok = refreshData(&displayChanged);
+    LOGI("startup refresh complete ok=%d display_changed=%d", ok, displayChanged);
   }
 
   if (currentPageHasData()) {
@@ -128,36 +129,43 @@ void loop() {
   bool refresh = digitalRead(static_cast<uint8_t>(BTN_REFRESH_PIN));
 
   if (up == LOW && upLast == HIGH) {
-    LOGI("button up pressed page_before=%s", pageNameC(static_cast<Page>(rtcCurrentPage)));
+    int previousPage = rtcCurrentPage;
+    LOGI("button up pressed page_before=%s", pageNameC(static_cast<Page>(previousPage)));
     rtcCurrentPage = (rtcCurrentPage + PAGE_COUNT - 1) % PAGE_COUNT;
-    refreshData();
-    if (currentPageHasData()) {
+    bool displayChanged = false;
+    bool ok = refreshData(&displayChanged);
+    if (ok) {
       drawDashboard();
     } else {
-      drawStatusScreen("Refresh failed", "No energy data available.");
+      rtcCurrentPage = previousPage;
+      LOGW("button up keeping previous screen after failed refresh page=%s", pageNameC(static_cast<Page>(previousPage)));
     }
-    LOGI("button up handled page_after=%s", pageNameC(static_cast<Page>(rtcCurrentPage)));
+    LOGI("button up handled ok=%d page_after=%s", ok, pageNameC(static_cast<Page>(rtcCurrentPage)));
     awakeSinceMs = millis();
   } else if (down == LOW && downLast == HIGH) {
-    LOGI("button down pressed page_before=%s", pageNameC(static_cast<Page>(rtcCurrentPage)));
+    int previousPage = rtcCurrentPage;
+    LOGI("button down pressed page_before=%s", pageNameC(static_cast<Page>(previousPage)));
     rtcCurrentPage = (rtcCurrentPage + 1) % PAGE_COUNT;
-    refreshData();
-    if (currentPageHasData()) {
+    bool displayChanged = false;
+    bool ok = refreshData(&displayChanged);
+    if (ok) {
       drawDashboard();
     } else {
-      drawStatusScreen("Refresh failed", "No energy data available.");
+      rtcCurrentPage = previousPage;
+      LOGW("button down keeping previous screen after failed refresh page=%s", pageNameC(static_cast<Page>(previousPage)));
     }
-    LOGI("button down handled page_after=%s", pageNameC(static_cast<Page>(rtcCurrentPage)));
+    LOGI("button down handled ok=%d page_after=%s", ok, pageNameC(static_cast<Page>(rtcCurrentPage)));
     awakeSinceMs = millis();
   } else if (refresh == LOW && refreshLast == HIGH) {
     LOGI("button refresh pressed");
-    bool ok = refreshData();
+    bool displayChanged = false;
+    bool ok = refreshData(&displayChanged);
     if (currentPageHasData()) {
-      drawDashboard();
+      if (displayChanged) drawDashboard();
     } else {
       drawStatusScreen("Refresh failed", "No energy data available.");
     }
-    LOGI("button refresh handled ok=%d", ok);
+    LOGI("button refresh handled ok=%d display_changed=%d", ok, displayChanged);
     awakeSinceMs = millis();
   }
 

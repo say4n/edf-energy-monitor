@@ -310,7 +310,7 @@ time_t startOfWeekLocal() {
   return startOfTodayLocal() - 6 * 86400;
 }
 
-time_t startOfMonthLocal() {
+time_t startOf30DayWindowLocal() {
   return startOfTodayLocal() - 29 * 86400;
 }
 
@@ -321,8 +321,31 @@ time_t startOfYearLocal() {
   return localTimeAt(tm.tm_year + 1900, tm.tm_mon + 1 - 11, 1);
 }
 
-int daysInCurrentMonth() {
+int daysIn30DayWindow() {
   return 30;
+}
+
+bool nearlyEqualFloat(float left, float right) {
+  float diff = fabsf(left - right);
+  float scale = max(max(fabsf(left), fabsf(right)), 1.0f);
+  return diff <= 0.005f || diff <= scale * 0.0001f;
+}
+
+bool bucketsEqual(const Bucket* left, const Bucket* right, int count) {
+  if (count <= 0) return true;
+  for (int i = 0; i < count; ++i) {
+    if (!nearlyEqualFloat(left[i].electricityKwh, right[i].electricityKwh) ||
+        !nearlyEqualFloat(left[i].gasKwh, right[i].gasKwh) ||
+        !nearlyEqualFloat(left[i].electricityCost, right[i].electricityCost) ||
+        !nearlyEqualFloat(left[i].gasCost, right[i].gasCost)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void copyBuckets(Bucket* dest, const Bucket* src, int count) {
+  if (count > 0) memcpy(dest, src, sizeof(Bucket) * count);
 }
 
 int bucketIndexFor(time_t t, Page page, time_t pageStart) {
@@ -341,6 +364,14 @@ int bucketIndexFor(time_t t, Page page, time_t pageStart) {
   int itemYear = item.tm_year;
   int itemMon = item.tm_mon;
   return (itemYear - startYear) * 12 + (itemMon - startMon);
+}
+
+String dashboardStatusLabel() {
+  return WiFi.isConnected() ? WiFi.localIP().toString() : "offline";
+}
+
+String dashboardRefreshLabel(time_t refreshedAt) {
+  return refreshedAt > 0 ? dateLabel(refreshedAt, "%d %b %H:%M") : "not refreshed";
 }
 
 float convertGasM3ToKwh(float m3) {

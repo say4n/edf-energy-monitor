@@ -79,13 +79,15 @@ bool provisionEdfAccount(const String& email, const String& password, const Stri
   }
 
   setupMode = false;
-  bool refreshed = refreshData();
+  bool displayChanged = false;
+  bool refreshed = refreshData(&displayChanged);
   if (rtcHasData) {
     drawDashboard();
   } else if (drawProgress) {
     drawStatusScreen("Setup saved", refreshed ? "No energy data returned." : "Refresh failed. G1 retries.");
   }
-  LOGI("provisionEdfAccount complete account=%s refreshed=%d", account.c_str(), refreshed);
+  LOGI("provisionEdfAccount complete account=%s refreshed=%d display_changed=%d",
+       account.c_str(), refreshed, displayChanged);
   return refreshed;
 }
 
@@ -119,13 +121,14 @@ void handleRefresh() {
     server.send(409, "text/plain", "Setup required");
     return;
   }
-  bool ok = refreshData();
+  bool displayChanged = false;
+  bool ok = refreshData(&displayChanged);
   if (rtcHasData) {
-    drawDashboard();
+    if (displayChanged) drawDashboard();
   } else {
     drawStatusScreen("Refresh failed", "No energy data available.");
   }
-  LOGI("HTTP /refresh complete ok=%d", ok);
+  LOGI("HTTP /refresh complete ok=%d display_changed=%d", ok, displayChanged);
   server.send(ok ? 200 : 500, "text/plain", ok ? "Refreshed" : String("Refresh failed: ") + rtcLastError);
 }
 

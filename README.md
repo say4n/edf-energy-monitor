@@ -22,3 +22,9 @@ pio run -e m5stack-papercolor -t upload
 ```
 
 On first boot, the device connects to Wi-Fi and shows a local setup URL. Open it on the same network, enter your EDF email, password, and account number, then the device stores only the EDF refresh token.
+
+## Usage notes
+
+- The three views are rolling windows: `7d`, `30d`, and `1y`.
+- Page switches intentionally trigger a network refresh for the selected view.
+- The M5Stack Paper Color display is a slow 6-colour e-ink panel, so the firmware avoids unnecessary full redraws when refreshed data has not visibly changed.

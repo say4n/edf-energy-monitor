@@ -421,53 +421,107 @@ void setCurrentPageHasData(bool hasData) {
   rtcHasData = rtcPageHasData[PAGE_WEEK] || rtcPageHasData[PAGE_MONTH] || rtcPageHasData[PAGE_YEAR];
 }
 
-bool refreshData() {
+bool refreshData(bool* displayChanged = nullptr) {
   LOGI("refreshData start");
   ledPulse(255, 255, 255, 2);
-  clearLastError();
-  
-  if (rtcCurrentPage == PAGE_WEEK) {
-    resetBuckets(rtcWeek, 7);
-  } else if (rtcCurrentPage == PAGE_MONTH) {
-    resetBuckets(rtcMonth, MAX_MONTH_DAYS);
-  } else if (rtcCurrentPage == PAGE_YEAR) {
-    resetBuckets(rtcYear, YEAR_MONTHS);
+
+  char previousError[sizeof(rtcLastError)];
+  strlcpy(previousError, rtcLastError, sizeof(previousError));
+  String previousStatus = dashboardStatusLabel();
+  String previousRefresh = dashboardRefreshLabel(rtcLastRefresh);
+  bool hadDataBefore = currentPageHasData();
+  Page page = static_cast<Page>(rtcCurrentPage);
+
+  Bucket nextWeek[7];
+  Bucket nextMonth[MAX_MONTH_DAYS];
+  Bucket nextYear[YEAR_MONTHS];
+  Bucket* nextBuckets = nullptr;
+  Bucket* currentBuckets = nullptr;
+  int nextCount = 0;
+  int currentCount = 0;
+
+  if (page == PAGE_WEEK) {
+    resetBuckets(nextWeek, 7);
+    nextBuckets = nextWeek;
+    currentBuckets = rtcWeek;
+    nextCount = 7;
+    currentCount = 7;
+  } else if (page == PAGE_MONTH) {
+    resetBuckets(nextMonth, MAX_MONTH_DAYS);
+    nextBuckets = nextMonth;
+    currentBuckets = rtcMonth;
+    nextCount = daysIn30DayWindow();
+    currentCount = rtcMonthDays;
+  } else if (page == PAGE_YEAR) {
+    resetBuckets(nextYear, YEAR_MONTHS);
+    nextBuckets = nextYear;
+    currentBuckets = rtcYear;
+    nextCount = YEAR_MONTHS;
+    currentCount = YEAR_MONTHS;
   }
-  
-  rtcMonthDays = daysInCurrentMonth();
+
+  clearLastError();
 
   time_t weekStart = startOfWeekLocal();
-  time_t monthStart = startOfMonthLocal();
+  time_t monthStart = startOf30DayWindowLocal();
   time_t yearStart = startOfYearLocal();
-  time_t nextWeek = weekStart + 7 * 86400;
-  time_t nextMonth = monthStart + 30 * 86400;
-  time_t nextYear;
+  time_t nextWeekEnd = weekStart + 7 * 86400;
+  time_t nextMonthEnd = monthStart + 30 * 86400;
+  time_t nextYearEnd;
   {
     struct tm tm {};
     localtime_r(&yearStart, &tm);
-    nextYear = localTimeAt(tm.tm_year + 1900, tm.tm_mon + 1 + 12, 1);
+    nextYearEnd = localTimeAt(tm.tm_year + 1900, tm.tm_mon + 1 + 12, 1);
   }
-  LOGI("refresh windows week=%s..%s month=%s..%s year=%s..%s month_days=%d",
-       isoUtc(weekStart).c_str(), isoUtc(nextWeek).c_str(),
-       isoUtc(monthStart).c_str(), isoUtc(nextMonth).c_str(),
-       isoUtc(yearStart).c_str(), isoUtc(nextYear).c_str(), rtcMonthDays);
+  LOGI("refresh windows week=%s..%s 30d=%s..%s year=%s..%s bucket_count=%d",
+       isoUtc(weekStart).c_str(), isoUtc(nextWeekEnd).c_str(),
+       isoUtc(monthStart).c_str(), isoUtc(nextMonthEnd).c_str(),
+       isoUtc(yearStart).c_str(), isoUtc(nextYearEnd).c_str(), nextCount);
 
-  if (rtcCurrentPage == PAGE_WEEK) {
-    if (!fetchFuelWindow(config.electricity, PAGE_WEEK, weekStart, nextWeek, rtcWeek, 7)) { setCurrentPageHasData(false); return false; }
-    if (!fetchFuelWindow(config.gas, PAGE_WEEK, weekStart, nextWeek, rtcWeek, 7)) { setCurrentPageHasData(false); return false; }
-  } else if (rtcCurrentPage == PAGE_MONTH) {
-    if (!fetchFuelWindow(config.electricity, PAGE_MONTH, monthStart, nextMonth, rtcMonth, rtcMonthDays)) { setCurrentPageHasData(false); return false; }
-    if (!fetchFuelWindow(config.gas, PAGE_MONTH, monthStart, nextMonth, rtcMonth, rtcMonthDays)) { setCurrentPageHasData(false); return false; }
-  } else if (rtcCurrentPage == PAGE_YEAR) {
-    if (!fetchFuelWindow(config.electricity, PAGE_YEAR, yearStart, nextYear, rtcYear, YEAR_MONTHS, yearStart)) { setCurrentPageHasData(false); return false; }
-    if (!fetchFuelWindow(config.gas, PAGE_YEAR, yearStart, nextYear, rtcYear, YEAR_MONTHS, yearStart)) { setCurrentPageHasData(false); return false; }
+  bool ok = false;
+  if (page == PAGE_WEEK) {
+    ok = fetchFuelWindow(config.electricity, PAGE_WEEK, weekStart, nextWeekEnd, nextWeek, 7) &&
+         fetchFuelWindow(config.gas, PAGE_WEEK, weekStart, nextWeekEnd, nextWeek, 7);
+  } else if (page == PAGE_MONTH) {
+    ok = fetchFuelWindow(config.electricity, PAGE_MONTH, monthStart, nextMonthEnd, nextMonth, nextCount) &&
+         fetchFuelWindow(config.gas, PAGE_MONTH, monthStart, nextMonthEnd, nextMonth, nextCount);
+  } else if (page == PAGE_YEAR) {
+    ok = fetchFuelWindow(config.electricity, PAGE_YEAR, yearStart, nextYearEnd, nextYear, YEAR_MONTHS, yearStart) &&
+         fetchFuelWindow(config.gas, PAGE_YEAR, yearStart, nextYearEnd, nextYear, YEAR_MONTHS, yearStart);
+  }
+
+  String currentStatus = dashboardStatusLabel();
+  if (!ok) {
+    bool changed = strcmp(previousError, rtcLastError) != 0 || previousStatus != currentStatus;
+    if (displayChanged) *displayChanged = changed;
+    LOGW("refreshData failed page=%s kept_cached=%d error_changed=%d status_changed=%d",
+         pageNameC(page), hadDataBefore, strcmp(previousError, rtcLastError) != 0, previousStatus != currentStatus);
+    return false;
+  }
+
+  bool dataChanged = !hadDataBefore || nextCount != currentCount || !bucketsEqual(currentBuckets, nextBuckets, nextCount);
+
+  if (page == PAGE_WEEK) {
+    copyBuckets(rtcWeek, nextWeek, 7);
+  } else if (page == PAGE_MONTH) {
+    copyBuckets(rtcMonth, nextMonth, nextCount);
+    rtcMonthDays = nextCount;
+  } else if (page == PAGE_YEAR) {
+    copyBuckets(rtcYear, nextYear, YEAR_MONTHS);
   }
 
   setCurrentPageHasData(true);
   rtcLastRefresh = nowUtc();
   clearLastError();
+
+  bool errorCleared = previousError[0] != '\0';
+  bool refreshLabelChanged = previousRefresh != dashboardRefreshLabel(rtcLastRefresh);
+  bool statusChanged = previousStatus != currentStatus;
+  bool changed = dataChanged || errorCleared || refreshLabelChanged || statusChanged;
+  if (displayChanged) *displayChanged = changed;
   ledPulse(0, 255, 0, 2);
-  LOGI("refreshData complete last_refresh=%ld", static_cast<long>(rtcLastRefresh));
+  LOGI("refreshData complete page=%s changed=%d data_changed=%d refresh_label_changed=%d last_refresh=%ld",
+       pageNameC(page), changed, dataChanged, refreshLabelChanged, static_cast<long>(rtcLastRefresh));
   return true;
 }
 

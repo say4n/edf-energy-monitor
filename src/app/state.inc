@@ -33,9 +33,9 @@ enum Page : int {
 
 const char* pageNameC(Page page) {
   switch (page) {
-    case PAGE_WEEK: return "Week";
-    case PAGE_MONTH: return "Month";
-    case PAGE_YEAR: return "Year";
+    case PAGE_WEEK: return "7d";
+    case PAGE_MONTH: return "30d";
+    case PAGE_YEAR: return "1y";
     default: return "Unknown";
   }
 }

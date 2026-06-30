@@ -1108,6 +1108,15 @@ void drawStackedChart(int x, int y, int w, int h, const String& title, Bucket* b
     int bx = startX + i * (barW + gap);
     if (gasH > 0) canvas.fillRect(bx, baseline - gasH, barW, gasH, COLOR_GAS);
     if (elecH > 0) canvas.fillRect(bx, baseline - gasH - elecH, barW, elecH, COLOR_ELECTRICITY);
+
+    float total = elec + gas;
+    if (total > 0.01f && barW >= 20) {
+      canvas.setFont(&fonts::Font0);
+      canvas.setTextColor(BLACK);
+      canvas.setTextDatum(bottom_center);
+      String label = cost ? String(total, 2) : String(total, 1);
+      canvas.drawString(label, bx + barW / 2, baseline - gasH - elecH - 2);
+    }
   }
 
   canvas.setFont(&fonts::Font2);

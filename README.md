@@ -2,6 +2,8 @@
 
 M5Stack Paper Color based energy monitor for EDF.
 
+![EDF Energy Monitor on M5Stack Paper Color](/assets/demo.jpeg)
+
 ## Setup
 
 1. Install PlatformIO.
